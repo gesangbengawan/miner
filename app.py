@@ -1,4 +1,4 @@
-from flask import Flask, render_template_string, request, session
+from flask import Flask, render_template_string, request, session, Response
 from web3 import Web3
 import requests
 from datetime import datetime
@@ -50,25 +50,35 @@ def time_ago(ts):
 def fetch_wallet_data(wallet):
     addr = wallet['address']
     balance = 0.0
-    try:
-        balance = float(w3.from_wei(contract.functions.balanceOf(addr).call(), 'ether'))
-    except: pass
+    for _ in range(3):  # Retry 3x
+        try:
+            balance = float(w3.from_wei(contract.functions.balanceOf(addr).call(), 'ether'))
+            break
+        except:
+            time.sleep(1)  # Wait before retry
+    else:
+        print(f"Failed to fetch balance for {addr}")
 
     txs = []
-    try:
-        url = f"{VANASCAN_API}?module=account&action=tokentx&contractaddress={CONTRACT_ADDRESS}&address={addr}&page=1&offset=50&sort=desc"
-        resp = requests.get(url, timeout=5)
-        if resp.status_code == 200 and resp.json().get('status') == '1':
-            for tx in resp.json()['result']:
-                if tx['to'].lower() == addr.lower():
-                    val = float(tx['value']) / 1e18
-                    txs.append({
-                        "hash": tx['hash'][:10] + "...",
-                        "value": val,
-                        "time_ago": time_ago(int(tx['timeStamp'])),
-                        "timestamp": int(tx['timeStamp'])
-                    })
-    except: pass
+    for _ in range(3):  # Retry 3x
+        try:
+            url = f"{VANASCAN_API}?module=account&action=tokentx&contractaddress={CONTRACT_ADDRESS}&address={addr}&page=1&offset=50&sort=desc"
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200 and resp.json().get('status') == '1':
+                for tx in resp.json()['result']:
+                    if tx['to'].lower() == addr.lower():
+                        val = float(tx['value']) / 1e18
+                        txs.append({
+                            "hash": tx['hash'][:10] + "...",
+                            "value": val,
+                            "time_ago": time_ago(int(tx['timeStamp'])),
+                            "timestamp": int(tx['timeStamp'])
+                        })
+                break
+        except:
+            time.sleep(1)  # Wait before retry
+    else:
+        print(f"Failed to fetch txs for {addr}")
 
     today = sum(t['value'] for t in txs if (datetime.now() - datetime.fromtimestamp(t['timestamp'])).days == 0)
     return {"balance": balance, "txs": txs, "today": today}
@@ -146,7 +156,7 @@ THEMES = {
     """
 }
 
-# === UTAMA (SAMA SEPERTI v6.1) ===
+# === UTAMA ===
 @app.route('/')
 def index():
     theme = request.args.get('theme', session.get('theme', 'dark'))
@@ -165,6 +175,9 @@ def index():
     <title>VFSN v6.2</title>
     <meta http-equiv="refresh" content="60">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <style>
         {css}
         * {{margin:0;padding:0;box-sizing:border-box;}}
@@ -241,7 +254,7 @@ def index():
         </a>
         '''
     html += "</div></body></html>"
-    return html
+    return Response(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
 
 @app.route('/clear_notif/<int:notif_id>', methods=['POST'])
 def clear_notif(notif_id):
@@ -249,7 +262,7 @@ def clear_notif(notif_id):
         cache["notifications"] = [n for n in cache["notifications"] if n['id'] != notif_id]
     return "", 204
 
-# === DETAIL: 5 KOLOM × 5 BARIS (25 TX) ===
+# === DETAIL ===
 @app.route('/wallet/<address>')
 def detail(address):
     theme = session.get('theme', 'dark')
@@ -268,7 +281,6 @@ def detail(address):
     start = (page-1) * per_page
     page_txs = txs[start:start+per_page]
 
-    # 5 kolom × 5 baris
     cols = [page_txs[i:i+5] for i in range(0, len(page_txs), 5)]
 
     html = f"""<!DOCTYPE html>
@@ -276,6 +288,9 @@ def detail(address):
     <title>{wallet['name']} - Detail</title>
     <meta http-equiv="refresh" content="60">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <style>
         {css}
         body {{padding:15px;}}
@@ -315,7 +330,6 @@ def detail(address):
                 <div class="tx-time">{tx['time_ago']}</div>
             </div>
             '''
-        # Fill empty cells
         for _ in range(5 - len(col)):
             html += '<div class="tx-item" style="visibility:hidden;"></div>'
 
@@ -330,7 +344,7 @@ def detail(address):
         </div>
     </div></body></html>
     """
-    return html
+    return Response(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)
