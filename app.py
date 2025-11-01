@@ -4,15 +4,20 @@ import requests
 from datetime import datetime
 import threading
 import time
+import logging
 
 app = Flask(__name__)
 app.secret_key = "vana-miner-bro-2025"
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # === KONFIG ===
 RPC_ENDPOINT = "https://rpc.vana.org"
 CONTRACT_ADDRESS = "0x0CC1Bc0131DD9782e65ca0319Cd3a60eBA3a932d"
 VANASCAN_API = "https://vanascan.io/api"
-w3 = Web3(Web3.HTTPProvider(RPC_ENDPOINT))
+w3 = Web3(Web3.HTTPProvider(RPC_ENDPOINT, request_kwargs={'timeout': 10}))
 
 ABI = [{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]
 contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=ABI)
@@ -50,20 +55,22 @@ def time_ago(ts):
 def fetch_wallet_data(wallet):
     addr = wallet['address']
     balance = 0.0
-    for _ in range(3):  # Retry 3x
+    for _ in range(5):  # Retry 5x
         try:
             balance = float(w3.from_wei(contract.functions.balanceOf(addr).call(), 'ether'))
+            logger.info(f"Balance fetched for {addr}: {balance}")
             break
-        except:
-            time.sleep(1)  # Wait before retry
+        except Exception as e:
+            logger.error(f"Balance fetch error for {addr}: {e}")
+            time.sleep(2)  # Wait longer before retry
     else:
-        print(f"Failed to fetch balance for {addr}")
+        logger.error(f"Failed to fetch balance for {addr} after 5 retries")
 
     txs = []
-    for _ in range(3):  # Retry 3x
+    for _ in range(5):  # Retry 5x
         try:
             url = f"{VANASCAN_API}?module=account&action=tokentx&contractaddress={CONTRACT_ADDRESS}&address={addr}&page=1&offset=50&sort=desc"
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, timeout=10)
             if resp.status_code == 200 and resp.json().get('status') == '1':
                 for tx in resp.json()['result']:
                     if tx['to'].lower() == addr.lower():
@@ -74,11 +81,13 @@ def fetch_wallet_data(wallet):
                             "time_ago": time_ago(int(tx['timeStamp'])),
                             "timestamp": int(tx['timeStamp'])
                         })
+                logger.info(f"Transactions fetched for {addr}: {len(txs)}")
                 break
-        except:
-            time.sleep(1)  # Wait before retry
+        except Exception as e:
+            logger.error(f"Tx fetch error for {addr}: {e}")
+            time.sleep(2)
     else:
-        print(f"Failed to fetch txs for {addr}")
+        logger.error(f"Failed to fetch txs for {addr} after 5 retries")
 
     today = sum(t['value'] for t in txs if (datetime.now() - datetime.fromtimestamp(t['timestamp'])).days == 0)
     return {"balance": balance, "txs": txs, "today": today}
@@ -107,8 +116,9 @@ def background_updater():
             
             cache["data"] = new_data
             cache["last_update"] = datetime.now().strftime("%H:%M:%S")
+            logger.info(f"Cache updated at {cache['last_update']}")
         
-        time.sleep(10)
+        time.sleep(30)  # Reduced frequency for Vercel
 
 threading.Thread(target=background_updater, daemon=True).start()
 
@@ -173,7 +183,7 @@ def index():
     html = f"""<!DOCTYPE html>
 <html><head>
     <title>VFSN v6.2</title>
-    <meta http-equiv="refresh" content="60">
+    <meta http-equiv="refresh" content="30">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
@@ -286,7 +296,7 @@ def detail(address):
     html = f"""<!DOCTYPE html>
 <html><head>
     <title>{wallet['name']} - Detail</title>
-    <meta http-equiv="refresh" content="60">
+    <meta http-equiv="refresh" content="30">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
